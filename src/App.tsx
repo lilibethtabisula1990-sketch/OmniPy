@@ -27,6 +27,157 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: key });
 };
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function generateWithRetry(ai: any, params: any, onRetry?: (msg: string) => void, maxRetries = 3) {
+  let lastError: any;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await ai.models.generateContent(params);
+    } catch (error: any) {
+      lastError = error;
+      const isRateLimit = error?.message?.includes('429') || error?.message?.toLowerCase().includes('rate limit');
+      if (isRateLimit && i < maxRetries - 1) {
+        const waitTime = Math.pow(2, i) * 3000 + Math.random() * 1000;
+        const msg = `Rate limit hit. Neural cooling in progress... Retrying in ${Math.round(waitTime/1000)}s (Attempt ${i + 1}/${maxRetries})`;
+        if (onRetry) onRetry(msg);
+        console.log(msg);
+        await sleep(waitTime);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
+function performNaturalDecrypt(code: string): DeobfuscationResult {
+  let currentCode = code.trim();
+  const steps: string[] = [];
+  const risks: string[] = [];
+  let changed = true;
+  let iterations = 0;
+  const maxIterations = 5;
+
+  // Helper to find the longest string in the code (likely the payload)
+  const findPayloadString = (text: string) => {
+    const stringRegex = /'''([\s\S]*?)'''|"""([\s\S]*?)"""|'([\s\S]*?)'|"([\s\S]*?)"/g;
+    let match;
+    let longest = "";
+    while ((match = stringRegex.exec(text)) !== null) {
+      const content = match[1] || match[2] || match[3] || match[4] || "";
+      if (content.length > longest.length) {
+        longest = content;
+      }
+    }
+    return longest;
+  };
+
+  while (changed && iterations < maxIterations) {
+    changed = false;
+    iterations++;
+    const previousCode = currentCode;
+
+    // 1. Check for ROT13 patterns
+    if (currentCode.includes("rot_13") || currentCode.includes("rot13") || currentCode.includes("codecs.decode")) {
+      const payload = findPayloadString(currentCode);
+      if (payload) {
+        const decoded = payload.replace(/[a-zA-Z]/g, (c: string) => {
+          const base = c <= 'Z' ? 65 : 97;
+          return String.fromCharCode((c.charCodeAt(0) - base + 13) % 26 + base);
+        });
+        if (decoded.includes("import ") || decoded.includes("def ") || decoded.includes("print(") || decoded.includes("from ")) {
+          currentCode = decoded;
+          steps.push(`[Iteration ${iterations}] Decoded ROT13 (Caesar Cipher) layer.`);
+          changed = true;
+        }
+      }
+    }
+
+    // 2. Check for base64 patterns
+    if (!changed && (currentCode.includes("base64") || currentCode.includes("b64decode"))) {
+      const payload = findPayloadString(currentCode);
+      if (payload && /^[A-Za-z0-9+/=\s\n\r]+$/.test(payload.trim())) {
+        try {
+          const decoded = atob(payload.trim().replace(/\s/g, ''));
+          if (decoded.includes("import ") || decoded.includes("def ") || decoded.includes("print(") || decoded.includes("from ") || decoded.length > payload.length * 0.5) {
+             currentCode = decoded;
+             steps.push(`[Iteration ${iterations}] Decoded Base64 layer.`);
+             changed = true;
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 3. Check for hex patterns
+    if (!changed) {
+      const hexRegex = /(['"](?:\\x[0-9a-fA-F]{2})+['"])/;
+      const hexMatch = currentCode.match(hexRegex);
+      if (hexMatch) {
+        try {
+          const hexStr = hexMatch[1].slice(1, -1).replace(/\\x/g, '');
+          let decoded = "";
+          for (let i = 0; i < hexStr.length; i += 2) {
+            decoded += String.fromCharCode(parseInt(hexStr.substr(i, 2), 16));
+          }
+          if (decoded.length > 0) {
+            currentCode = currentCode.replace(hexMatch[0], `'${decoded}'`);
+            steps.push(`[Iteration ${iterations}] Converted Hexadecimal escape sequences.`);
+            changed = true;
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 4. Check for reversed strings
+    if (!changed && currentCode.includes("[::-1]")) {
+      const payload = findPayloadString(currentCode);
+      if (payload) {
+        currentCode = payload.split('').reverse().join('');
+        steps.push(`[Iteration ${iterations}] Reversed string slicing pattern.`);
+        changed = true;
+      }
+    }
+
+    // 5. Check for chr() join patterns
+    if (!changed) {
+      const chrRegex = /(?:chr\(\d+\)\s*\+\s*)*chr\(\d+\)/g;
+      const chrMatch = currentCode.match(chrRegex);
+      if (chrMatch) {
+        try {
+          const decoded = chrMatch[0].split('+').map(c => {
+            const num = c.match(/\d+/);
+            return num ? String.fromCharCode(parseInt(num[0])) : '';
+          }).join('');
+          currentCode = currentCode.replace(chrMatch[0], `'${decoded}'`);
+          steps.push(`[Iteration ${iterations}] Decoded character mapping (chr() join).`);
+          changed = true;
+        } catch (e) {}
+      }
+    }
+
+    if (currentCode === previousCode) changed = false;
+  }
+
+  // Final risk assessment
+  currentCode.replace(/exec\(|eval\(|compile\(|getattr\(|__import__\(|os\.system\(|subprocess\.run\(/g, (m) => {
+    if (!risks.includes(`Potentially dangerous execution wrapper found: ${m}`)) {
+      risks.push(`Potentially dangerous execution wrapper found: ${m}`);
+    }
+    return m;
+  });
+
+  if (steps.length === 0) {
+    throw new Error("No common obfuscation patterns detected for Natural Decrypt. Please use Neural AI for complex analysis.");
+  }
+
+  return {
+    code: currentCode,
+    explanation: `NATURAL DECRYPT REPORT (Iterations: ${iterations}):\n\n${steps.join('\n')}\n\nNote: Natural decrypt uses pattern matching and standard decoding. It is faster but less capable than Neural AI for complex multi-layer obfuscation.`,
+    securityNotes: risks.length > 0 ? risks : ["No immediate execution risks detected in the first layer."]
+  };
+}
+
 interface DeobfuscationResult {
   code: string;
   explanation: string;
@@ -42,9 +193,11 @@ interface AppSettings {
 
 export default function App() {
   const [mode, setMode] = useState<'encrypt' | 'decrypt'>('decrypt');
+  const [decryptMethod, setDecryptMethod] = useState<'ai' | 'natural'>('ai');
   const [inputCode, setInputCode] = useState('');
   const [result, setResult] = useState<DeobfuscationResult | null>(null);
   const [isDecoding, setIsDecoding] = useState(false);
+  const [retryStatus, setRetryStatus] = useState<string | null>(null);
   const [showHero, setShowHero] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -91,6 +244,23 @@ export default function App() {
     setIsDecoding(true);
     setError(null);
     setResult(null);
+
+    if (mode === 'decrypt' && decryptMethod === 'natural') {
+      try {
+        await sleep(1500); // Simulate processing
+        const naturalResult = performNaturalDecrypt(inputCode);
+        setResult(naturalResult);
+        setTimeout(() => {
+          resultRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+        setIsDecoding(false);
+        return;
+      } catch (err: any) {
+        setError(`Natural Decrypt failed: ${err.message}. Falling back to Neural AI is recommended.`);
+        setIsDecoding(false);
+        return;
+      }
+    }
 
     const ai = getAI();
     if (!ai) {
@@ -145,7 +315,7 @@ export default function App() {
              "securityNotes": ["instructions for safe execution and verification of integrity"]
            }`;
 
-      const response = await ai.models.generateContent({
+      const response = await generateWithRetry(ai, {
         model: 'gemini-3.1-pro-preview',
         contents: [
           {
@@ -161,8 +331,9 @@ export default function App() {
             : "You are a world-class Python obfuscation expert. Your goal is to protect code by making it unreadable while maintaining functionality. Always respond with valid JSON.",
           responseMimeType: "application/json",
           temperature: mode === 'decrypt' ? 0.0 : 0.9,
+          maxOutputTokens: 16384,
         }
-      });
+      }, (msg) => setRetryStatus(msg));
 
       let text = response.text || '';
       
@@ -191,13 +362,14 @@ export default function App() {
       
       if (errorMessage.includes("Safety")) {
         setError("The script was flagged by safety filters. It might contain highly malicious patterns that the AI is restricted from processing.");
-      } else if (errorMessage.includes("429")) {
-        setError("Rate limit exceeded. Please wait a moment before trying again.");
+      } else if (errorMessage.includes("429") || errorMessage.toLowerCase().includes("rate limit")) {
+        setError("Rate limit exceeded. The neural network is cooling down. Please wait 30 seconds and try again.");
       } else {
-        setError(`Failed to decode: ${errorMessage.split('\n')[0]}`);
+        setError(`Failed to process: ${errorMessage.split('\n')[0]}`);
       }
     } finally {
       setIsDecoding(false);
+      setRetryStatus(null);
     }
   };
 
@@ -403,6 +575,22 @@ export default function App() {
                 <p className="text-[9px] text-secondary uppercase tracking-widest">Input Buffer: Python 3.x</p>
               </div>
               <div className="flex items-center gap-6">
+                {mode === 'decrypt' && (
+                  <div className="flex items-center bg-bg/50 border border-line p-1 rounded-sm gap-1">
+                    <button 
+                      onClick={() => setDecryptMethod('ai')}
+                      className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest rounded-sm transition-all ${decryptMethod === 'ai' ? 'bg-accent text-bg shadow-[0_0_15px_rgba(0,255,65,0.3)]' : 'text-secondary hover:text-accent'}`}
+                    >
+                      Neural AI
+                    </button>
+                    <button 
+                      onClick={() => setDecryptMethod('natural')}
+                      className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest rounded-sm transition-all ${decryptMethod === 'natural' ? 'bg-accent text-bg shadow-[0_0_15px_rgba(0,255,65,0.3)]' : 'text-secondary hover:text-accent'}`}
+                    >
+                      Natural Logic
+                    </button>
+                  </div>
+                )}
                 <input 
                   type="file" 
                   ref={fileInputRef} 
@@ -493,8 +681,12 @@ export default function App() {
                     <div className="w-20 h-20 border-2 border-accent rounded-full animate-spin border-t-transparent" />
                   </div>
                   <div className="flex flex-col items-center gap-2">
-                    <p className="font-mono text-sm font-black uppercase tracking-[0.4em] animate-pulse">Neural Processing</p>
-                    <p className="text-[10px] opacity-50 uppercase tracking-widest">Bypassing encryption layers...</p>
+                    <p className="font-mono text-sm font-black uppercase tracking-[0.4em] animate-pulse">
+                      {retryStatus ? "Neural Cooling" : "Neural Processing"}
+                    </p>
+                    <p className="text-[10px] opacity-50 uppercase tracking-widest">
+                      {retryStatus || "Bypassing encryption layers..."}
+                    </p>
                   </div>
                 </div>
               ) : result ? (

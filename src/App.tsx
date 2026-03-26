@@ -21,7 +21,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const getAI = () => {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key || key === "MY_GEMINI_API_KEY") return null;
+  return new GoogleGenAI({ apiKey: key });
+};
 
 interface DeobfuscationResult {
   code: string;
@@ -88,8 +92,9 @@ export default function App() {
     setError(null);
     setResult(null);
 
-    if (!process.env.GEMINI_API_KEY) {
-      setError("Gemini API Key is missing. Please check your environment configuration.");
+    const ai = getAI();
+    if (!ai) {
+      setError("GEMINI_API_KEY_MISSING");
       setIsDecoding(false);
       return;
     }
@@ -422,4 +427,185 @@ export default function App() {
                 value={inputCode}
                 onChange={(e) => setInputCode(e.target.value)}
                 placeholder={mode === 'decrypt' ? "// PASTE OBFUSCATED PAYLOAD HERE..." : "// PASTE CLEAN SOURCE CODE HERE..."}
-                className="w-full h-[500px] lg:h-full p-8 bg-transparent font-mono text-sm text-ink 
+                className="w-full h-[500px] lg:h-full p-8 bg-transparent font-mono text-sm text-ink focus:outline-none resize-none placeholder:text-line leading-relaxed relative z-10"
+              />
+              <div className="absolute bottom-6 right-6 flex gap-4">
+                <button
+                  onClick={handleProcess}
+                  disabled={isDecoding || !inputCode.trim()}
+                  className={`flex items-center gap-3 px-8 py-4 bg-accent text-bg font-black uppercase tracking-[0.2em] text-xs rounded-sm transition-all hover:scale-[1.05] active:scale-[0.95] disabled:opacity-30 disabled:scale-100 disabled:cursor-not-allowed shadow-[0_0_30px_rgba(0,255,65,0.3)]`}
+                >
+                  {isDecoding ? (
+                    <>
+                      <Zap className="animate-spin" size={18} />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Play size={18} />
+                      Initialize {mode === 'decrypt' ? 'Decryption' : 'Obfuscation'}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {/* Output Section */}
+          <section className="flex flex-col gap-6" ref={resultRef}>
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-1">
+                <h2 className="text-xs font-black uppercase tracking-[0.2em] text-accent flex items-center gap-2">
+                  <Terminal size={16} /> {mode === 'decrypt' ? 'Decoded Source' : 'Protected Payload'}
+                </h2>
+                <p className="text-[9px] text-secondary uppercase tracking-widest">Output Stream: Verified</p>
+              </div>
+              {result && (
+                <div className="flex items-center gap-6">
+                  <button 
+                    onClick={handleDownload}
+                    className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-secondary hover:text-accent transition-colors"
+                  >
+                    <Download size={14} />
+                    Export .py
+                  </button>
+                  <button 
+                    onClick={handleCopy}
+                    className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-secondary hover:text-accent transition-colors"
+                  >
+                    {copied ? <Check size={14} /> : <Copy size={14} />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 widget-container rounded-sm overflow-hidden flex flex-col min-h-[500px] relative">
+              {isDecoding && (
+                <div className="absolute inset-0 z-10 pointer-events-none">
+                  <div className="w-full h-1 bg-accent/30 absolute top-0 animate-[scan_2s_linear_infinite]" />
+                </div>
+              )}
+              {isDecoding ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-accent gap-6">
+                  <div className="relative">
+                    <div className="w-20 h-20 border-2 border-accent/20 rounded-full animate-ping absolute inset-0" />
+                    <div className="w-20 h-20 border-2 border-accent rounded-full animate-spin border-t-transparent" />
+                  </div>
+                  <div className="flex flex-col items-center gap-2">
+                    <p className="font-mono text-sm font-black uppercase tracking-[0.4em] animate-pulse">Neural Processing</p>
+                    <p className="text-[10px] opacity-50 uppercase tracking-widest">Bypassing encryption layers...</p>
+                  </div>
+                </div>
+              ) : result ? (
+                <div className="flex-1 overflow-auto bg-[#0d0d0e]">
+                  <SyntaxHighlighter 
+                    language="python" 
+                    style={atomDark}
+                    customStyle={{ margin: 0, padding: '2rem', background: 'transparent', fontSize: '14px', lineHeight: '1.6' }}
+                  >
+                    {result.code}
+                  </SyntaxHighlighter>
+                </div>
+              ) : error ? (
+                <div className="flex-1 flex flex-col items-center justify-center p-10 text-center gap-6">
+                  <ShieldAlert size={64} className="text-red-500 animate-bounce" />
+                  <div className="flex flex-col gap-4">
+                    <p className="font-mono text-sm text-red-500 font-black uppercase tracking-widest">
+                      {error === "GEMINI_API_KEY_MISSING" ? "API KEY REQUIRED" : "SYSTEM FAILURE"}
+                    </p>
+                    {error === "GEMINI_API_KEY_MISSING" ? (
+                      <div className="space-y-6">
+                        <p className="text-xs text-secondary max-w-xs mx-auto leading-relaxed uppercase tracking-widest">
+                          OMNIPY requires a Gemini API Key to process neural obfuscation. You can get one for free from Google AI Studio.
+                        </p>
+                        <div className="flex flex-col gap-3">
+                          <a 
+                            href="https://aistudio.google.com/app/apikey" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="px-6 py-3 bg-red-500 text-white text-[10px] font-black uppercase tracking-[0.3em] rounded-sm hover:bg-red-600 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+                          >
+                            Get Free API Key
+                          </a>
+                          <button 
+                            onClick={() => setError(null)}
+                            className="px-6 py-3 border border-line text-secondary text-[10px] font-black uppercase tracking-[0.3em] rounded-sm hover:border-accent hover:text-accent transition-all"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-secondary max-w-xs mx-auto leading-relaxed">{error}</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-secondary p-16 text-center gap-6 opacity-30">
+                  <Terminal size={80} />
+                  <p className="font-mono text-xs font-black uppercase tracking-[0.5em]">Awaiting Payload</p>
+                </div>
+              )}
+            </div>
+          </section>
+        </main>
+      </div>
+
+      {/* Analysis Details */}
+      <AnimatePresence>
+        {result && !isDecoding && (
+          <motion.div 
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-[1600px] mx-auto w-full px-6 lg:px-10 pb-20 grid grid-cols-1 lg:grid-cols-3 gap-10"
+          >
+            <div className="lg:col-span-2 widget-container p-10 rounded-sm relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-1 bg-accent/10" />
+              <h3 className="text-xs font-black uppercase tracking-[0.3em] text-accent mb-8 border-b border-line pb-4 flex items-center justify-between">
+                <span>{mode === 'decrypt' ? 'Analysis Report' : 'Protection Manifest'}</span>
+                <span className="text-[9px] opacity-30 font-mono">ID: {Math.random().toString(16).slice(2, 10).toUpperCase()}</span>
+              </h3>
+              <div className="font-mono text-sm leading-relaxed text-ink/80 whitespace-pre-wrap bg-bg/30 p-6 border border-line/30 rounded-sm">
+                {result.explanation}
+              </div>
+            </div>
+            
+            <div className="widget-container p-10 rounded-sm">
+              <h3 className="text-xs font-black uppercase tracking-[0.3em] text-accent mb-8 border-b border-line pb-4 flex items-center gap-3">
+                {mode === 'decrypt' ? <ShieldAlert size={18} /> : <ShieldCheck size={18} />} 
+                {mode === 'decrypt' ? 'Threat Assessment' : 'Integrity Notes'}
+              </h3>
+              <ul className="space-y-6">
+                {result.securityNotes.map((note, i) => (
+                  <li key={i} className="flex gap-4 items-start group">
+                    <div className="mt-1.5 w-2 h-2 bg-accent rounded-full shrink-0 shadow-[0_0_10px_rgba(0,255,65,0.5)] group-hover:scale-125 transition-transform" />
+                    <p className="text-[11px] font-bold uppercase tracking-tight leading-relaxed text-secondary group-hover:text-ink transition-colors">{note}</p>
+                  </li>
+                ))}
+                {result.securityNotes.length === 0 && (
+                  <li className="text-[11px] font-bold uppercase tracking-widest opacity-30">No critical alerts</li>
+                )}
+              </ul>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+
+      {/* Footer */}
+      <footer className="border-t border-line p-8 bg-card-bg/80 text-[10px] font-black uppercase tracking-[0.5em] text-secondary flex flex-col md:flex-row items-center justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <span className="text-accent">PYDECODE PRO</span>
+          <span className="opacity-20">|</span>
+          <span>&copy; 2026 NEURAL SYSTEMS</span>
+        </div>
+        <div className="flex gap-10 opacity-40">
+          <span className="hover:text-accent transition-colors cursor-help">AES-256 ENCRYPTED</span>
+          <span className="hover:text-accent transition-colors cursor-help">ZERO-LOG POLICY</span>
+          <span className="hover:text-accent transition-colors cursor-help">SANDBOXED ENV</span>
+        </div>
+      </footer>
+    </div>
+  );
+}

@@ -1,0 +1,5 @@
+{
+  "name": "OMNIPY",
+  "description": "Advanced Python script deobfuscator and obfuscator powered by Gemini AI. Protect your code with multi-layer encryption or reverse engineer complex obfuscated scripts.",
+  "requestFramePermissions": []
+}
